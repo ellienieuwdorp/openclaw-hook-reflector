@@ -1,0 +1,13 @@
+{
+  "name": "openclaw-hook-reflector",
+  "version": "0.1.0",
+  "description": "LLM-powered session summarizer hook for OpenClaw",
+  "type": "module",
+  "author": "Ellie Nieuwdorp",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ellienieuwdorp/openclaw-hook-reflector.git"
+  },
+  "keywords": ["openclaw", "hook", "session", "summary", "llm"]
+}
