@@ -11,7 +11,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 // ---------------------------------------------------------------------------
-// Resolve OpenClaw internals dynamically (we're loaded inside the gateway)
+// Resolve OpenClaw internals via the stable extensionAPI
 // ---------------------------------------------------------------------------
 
 /** Walk up from the gateway entry point to find the openclaw dist/ directory. */
@@ -36,9 +36,7 @@ function resolveOpenclawDist() {
 
 let _runEmbeddedPiAgent = null;
 let _resolveAgentWorkspaceDir = null;
-let _resolveDefaultAgentId = null;
 let _resolveAgentDir = null;
-let _resolveHookConfig = null;
 
 async function loadInternals() {
   if (_runEmbeddedPiAgent) return;
@@ -46,18 +44,23 @@ async function loadInternals() {
   const dist = resolveOpenclawDist();
   if (!dist) throw new Error("[reflector] Cannot locate openclaw dist/");
 
-  const toUrl = (rel) => pathToFileURL(path.join(dist, rel)).href;
+  // Use the stable extensionAPI instead of internal hashed modules
+  const apiUrl = pathToFileURL(path.join(dist, "extensionAPI.js")).href;
+  const api = await import(apiUrl);
 
-  const piMod = await import(toUrl("agents/pi-embedded.js"));
-  _runEmbeddedPiAgent = piMod.runEmbeddedPiAgent;
+  _runEmbeddedPiAgent = api.runEmbeddedPiAgent;
+  _resolveAgentWorkspaceDir = api.resolveAgentWorkspaceDir;
+  _resolveAgentDir = api.resolveAgentDir;
+}
 
-  const scopeMod = await import(toUrl("agents/agent-scope.js"));
-  _resolveAgentWorkspaceDir = scopeMod.resolveAgentWorkspaceDir;
-  _resolveDefaultAgentId = scopeMod.resolveDefaultAgentId;
-  _resolveAgentDir = scopeMod.resolveAgentDir;
+/** Resolve default agent ID from config (inlined — not in extensionAPI exports). */
+function resolveDefaultAgentId(cfg) {
+  return cfg?.agents?.default ?? "main";
+}
 
-  const configMod = await import(toUrl("hooks/config.js"));
-  _resolveHookConfig = configMod.resolveHookConfig;
+/** Resolve hook env config (inlined — not in extensionAPI exports). */
+function resolveHookEnv(cfg, hookName) {
+  return cfg?.hooks?.internal?.entries?.[hookName]?.env || {};
 }
 
 // ---------------------------------------------------------------------------
@@ -183,7 +186,7 @@ async function llmCall({ prompt, modelStr, fallbackModels, cfg, label, timeoutMs
   for (const m of models) {
     try {
       const { provider, model } = splitProviderModel(m);
-      const agentId = _resolveDefaultAgentId(cfg);
+      const agentId = resolveDefaultAgentId(cfg);
       const workspaceDir = _resolveAgentWorkspaceDir(cfg, agentId);
       const agentDir = _resolveAgentDir(cfg, agentId);
 
@@ -247,8 +250,7 @@ const handler = async (event) => {
   }
 
   // Resolve hook config from env entries
-  const hookCfg = _resolveHookConfig(cfg, "reflector") || {};
-  const env = hookCfg.env || {};
+  const env = resolveHookEnv(cfg, "reflector");
 
   const summaryModel = env.REFLECTOR_SUMMARY_MODEL || "google/gemini-2.5-flash";
   const slugModel = env.REFLECTOR_SLUG_MODEL || "google/gemini-2.5-flash-lite";
@@ -361,7 +363,7 @@ ${summary}`;
       }
 
       // Step 4: Save to memory
-      const agentId = _resolveDefaultAgentId(cfg);
+      const agentId = resolveDefaultAgentId(cfg);
       const workspaceDir = _resolveAgentWorkspaceDir(cfg, agentId);
       const memoryDir = path.join(workspaceDir, "memory");
       await fs.mkdir(memoryDir, { recursive: true });
