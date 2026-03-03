@@ -269,10 +269,38 @@ const handler = async (event) => {
 
   console.log(`[reflector] Processing session: ${sessionFile}`);
 
+  // OpenClaw renames session files to .jsonl.reset.<timestamp> on /new.
+  // The hook fires AFTER the rename, so we need to find the renamed file.
+  let resolvedSessionFile = sessionFile;
+  try {
+    await fs.access(sessionFile);
+  } catch {
+    // Original file gone — look for the .reset.* version
+    const dir = path.dirname(sessionFile);
+    const base = path.basename(sessionFile);
+    try {
+      const files = await fs.readdir(dir);
+      const resetFile = files
+        .filter((f) => f.startsWith(base + ".reset."))
+        .sort()
+        .pop(); // most recent
+      if (resetFile) {
+        resolvedSessionFile = path.join(dir, resetFile);
+        console.log(`[reflector] Using renamed file: ${resolvedSessionFile}`);
+      } else {
+        console.error(`[reflector] Session file not found and no .reset variant: ${sessionFile}`);
+        return;
+      }
+    } catch (dirErr) {
+      console.error("[reflector] Failed to scan session dir:", dirErr);
+      return;
+    }
+  }
+
   // Step 1: Build clean transcript
   let transcript;
   try {
-    transcript = await buildCleanTranscript(sessionFile, maxTranscriptChars);
+    transcript = await buildCleanTranscript(resolvedSessionFile, maxTranscriptChars);
   } catch (err) {
     console.error("[reflector] Failed to read session file:", err);
     return;
@@ -368,8 +396,12 @@ ${summary}`;
       const memoryDir = path.join(workspaceDir, "memory");
       await fs.mkdir(memoryDir, { recursive: true });
 
-      const date = new Date().toISOString().split("T")[0];
-      const filename = `${date}-reflector-${slug}.md`;
+      const _now = new Date();
+      const date = _now.toISOString().split("T")[0];
+      const _hh = String(_now.getHours()).padStart(2, "0");
+      const _mm = String(_now.getMinutes()).padStart(2, "0");
+      const time = `${_hh}:${_mm}`;
+      const filename = `${date} ${time} ${slug}.md`;
       const savePath = path.join(memoryDir, filename);
 
       // Avoid overwriting existing files
@@ -379,7 +411,7 @@ ${summary}`;
         // File exists, add a numeric suffix
         let i = 2;
         while (true) {
-          const altPath = path.join(memoryDir, `${date}-reflector-${slug}-${i}.md`);
+          const altPath = path.join(memoryDir, `${date} ${time} ${slug}-${i}.md`);
           try {
             await fs.access(altPath);
             i++;
@@ -393,7 +425,7 @@ ${summary}`;
       }
 
       const content = `---
-date: ${date}
+date: ${date} ${time}
 session: ${path.basename(sessionFile)}
 slug: ${slug}
 ---
